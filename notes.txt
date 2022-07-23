@@ -1,0 +1,86 @@
+- effect system for permissions, restrictions, triggers, replacement, cost affecting, etc; check all objects + extras
+
+- combat
+- triggered abilities
+
+- make spells and abilities actually go on the stack - uniform system for cost changing effects
+  - include mana abilities for uniformity? just immedietely resolve
+
+- should be using __str__ over __repr__ but need to write more for displaying boards
+
+- system for enumerating choices to determine if any legal choice?
+
+- to implement layers/depends:
+  rules aren't the most clear
+  (what i thought: pick the oldest timestamp among effects not dependant on anything)
+  (more accurate: pick the oldest timestamp among effects not dependant on anything or in a cycle)
+
+- layers and copying objects are tricky esp wrt linked abilities. gains ability; copied on each layer update? prob no. 
+  cache copies in a dict? maybe. weak dict? 
+  chars can have linked ability pairs - update those on copies. test necrotic ooze, quicksilver elemental, unstable shapeshifter. 
+  linked abilities on "the exiled card" are weakrefs?
+
+- difficult: state triggers (dark depths), effects that depend on charactaristics changing, 
+  e.g. "when you lose control"; removal from combat on losing types or control. compute chars on every event?
+
+- full implementation of repl effects is tricky. 614.12 requires creating a dummy object to determine whether an ability should apply. or reversable moves? might also be useful for putting things on the stack but allowing reversal.
+  questions & thoughts:
+  - "not applying the same effect multiple times" is that within a tree structure? tef ageless insight + alms collector? dredge?
+  - how are simutaneous effects handled fully generally? are arbitrary sim effects possible? incl card draw? 
+   - 121.6b implies events sim with draw happen first?
+  - can a repl effect for damage result in something other than damage? besides when the effect actually 'resolves' (yes, prevnetion effects can result in e.g. lifegain)
+    - in fact prev effects can result in arbitrary things incl damage
+    - example in 120.4d is confusing; 
+       - are prevention effects simu with dmg results or not? 
+       - how does worship know whether the dmg will reduce life to <1? 
+       - does it contradict 615.5? 
+       - xmage doesn't implement this interaction the way this example sayss. do arena and mtgo?
+         - arena doesn't have a card that prevents damage and turns it into lifegain; but the similar (and simpler) interaction with lifelink is testable
+  - can a repl effect replace non-damage with damage? (yes; card draw can be replaced with dmg; however that's never sim)
+  - can a repl effect ever replace direct move with non-move? (not incl draw and regen) (cant effects like grafdiggers can can prevent the move)
+  - are all damage repl effects only affecting a single damage instance? (yes i believe)
+  - can damage that should be considered separate damage instances (e.g. for the purpose of lifelink or 'when one or more creatures deal damage') be sim?
+  - "if one or more X would happen, instead ..." only seems to apply with tokens and counters; academy man seems unique in applying per token?
+  - sim damage events, and sim move events, can be dealt with individually it seems? actually "the next time x would deal damage" preventions... 
+  - counters can be dealt with per counter type it seems
+  - as something etbs, create a dummy object to test whether it has abilities? (blood moon + shockland) (may only be necassary if it has an "as it enters" ability base)
+  - can repl effects on a sub-effect affect the main one? (i think so, acad man + clones?)
+  - etb repl effects: tricky; there's a judging ftw vid on it
+    - need to consider chars of the object as it would exist on the battlefield (including its own static abilities + other cts effects eg blood moon)
+    - but it still isn't considered on the battlefield 
+    - e.g. theros god + "creatures enter tapped"; urborg + isolated chapel - consider on battlefield when determining what the chars are but not when checking conditions [even those derrived from the chars and are being computed at that time!] 
+      - this means that the approach of "put the dummy object on the battlefield when checking chars, then remove it for checking conditions on repl effects" fails when considering conditions on char-cts effects.
+    - so there are separate things that effects have to look at - cts effects look at stuff as it would happen whereas conditions still see the current gamestate just before it happens
+    - how to implement this? i'd like to avoid specifying in each call to an objectsets builder whether to see the dummy objects, even as an optional arg, as that opens up the possibility of getting it wrong 
+      - can we have a global flag? which effects (char-cts and repl) apply sees dummy object; conditions on those ('as long as you control a swamp') don't. seems messy though. 
+
+
+rules for dependencies seem unclear
+
+613.8b An effect dependent on one or more other effects waits to apply until just after all of those
+effects have been applied. If multiple dependent effects would apply simultaneously in this way,
+they’re applied in timestamp order relative to each other. If several dependent effects form a
+dependency loop, then this rule is ignored and the effects in the dependency loop are applied in
+timestamp order.
+613.8c After each effect is applied, the order of remaining effects is reevaluated and may change if
+an effect that has not yet been applied becomes dependent on or independent of one or more
+other effects that have not yet been applied.
+
+my initial interpretation was "when choosing which effect to apply, choose the one with the oldest timestamp that is not dependant on anything; or if not possible then pick the one with the oldest timestamp. Then recompute dependancies and repeat".
+interpretation from judgingFTW is "choose the one with the oldest timestamp that is not dependant on anything and also not part of a loop"
+that is closer to the rules. unfortunately harder to compute (needs global info about the dependancy graph "is X part of a loop" rather than only local info like "is X dependant on anything?")
+however another interpretation of 613.8b that seems consistent with the wording is "if there is any loop at all, ignore *all* dependancies and choose the one with the oldest timestamp"
+surely that can't be what's intended?
+and also does "whether an effect is part of a loop" depend on only the effects yet to be applied; or all effects? 
+as my initial interpretation and I believe the one in judgingFTW's video (will need to rewatch to double-check) have the property that once one effect in a loop is chosen by timestamp order, the rest get applied in dependancy order.
+however it seems another interpretation is that you simply apply all of the loop in timestamp order regardless (and 613.8c only applies when what is actually dependant on what changes); meaning "whether it's part of a loop" is info that doesn't change on applying an effect 
+todo: 
+- check what xmage does
+- check what mtgo does (this requires a concrete example of a loop with side chains / side loops; i think chains of dralnu's crusade and conversion should work; also requires getting mtgo)
+- i don't think arena has a suffiecent card pool to even support a dependancy choin of length 3 let alone a loop; so cannot be tested 
+is perfect rules accuracy a goal? if not i might just go with my initial interpretation for now. it makes sense and is the easiest to compute.
+is there an example of multiple dependancy loops/chains where the order of the effects in different chains releative to another is visible?
+adding life and limb to the mix introduces an extra dependancy
+
+turns out xmage doesn't implemnt dependancies properly
+and replacement effects are only applied to single events at a time
